@@ -1,0 +1,11 @@
+-- Demo seed sketch — mirrors lib/data.ts mock books (picsum covers).
+-- Insert authors first, then books with claim_status='unclaimed' and a
+-- unique claim_slug, so /claim/<slug> works on Day 1.
+-- Replace the example rows with your real (licensed) book list before launch.
+
+-- insert into authors (email, name, is_verified) values
+--   ('demo-author@example.com', 'Maya Okafor', true);
+--
+-- insert into books (asin, title, cover_url, genre, blurb, claim_status, claim_slug, upvote_count) values
+--   ('B000000003', 'The Silent Witness', 'https://picsum.photos/seed/00000003/400/600',
+--    'Thriller & Mystery', 'Demo blurb.', 'unclaimed', 'b000000003', 511);

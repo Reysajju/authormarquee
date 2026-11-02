@@ -1,0 +1,57 @@
+-- AuthorMarquee — midnight draw engine (concept + SQL sketch)
+-- Intended schedule: pg_cron at 00:00 UTC daily.
+--   select cron.schedule('midnight-draw', '0 0 * * *', $$ ... $$);
+-- The logic below is written as a single transaction-friendly script you can
+-- adapt into a Postgres function / Supabase Edge Function. The canonical
+-- weighted-pick logic (weight = 1 + upvote_count, free sharing only) lives
+-- in lib/draw.ts and must stay in sync with this SQL.
+--
+-- POLICY: the draw is 100% FREE. Paid purchases NEVER change draw odds.
+-- Paid purchases are only "Guaranteed Sponsored Placement / Ad Slot Booking".
+--
+-- Per genre, per day:
+--   Step A: 1 random free winner, weighted by upvote_count.
+--   Step B: 10 shortlisted finalists (highest upvotes among the rest),
+--           entry_type = 'shortlisted_finalist', 24h discount countdown.
+--   Step C: tomorrow's dynamic price (computed in the app via lib/draw.ts):
+--           price = LEAST(100, 10 + pool_size * 0.25 + booked_slots * 8)
+--
+-- Weighted winner pick (one genre, for draw_date = CURRENT_DATE):
+--   WITH pool AS (
+--     SELECT book_id, 1 + upvote_count AS w
+--     FROM pool_entries
+--     WHERE genre = '<GENRE>' AND draw_date = CURRENT_DATE
+--       AND entry_type = 'free_draw'
+--   ), total AS (SELECT sum(w) AS t FROM pool),
+--   roll AS (SELECT random() * (SELECT t FROM total) AS r)
+--   SELECT book_id FROM (
+--     SELECT book_id, sum(w) OVER (ORDER BY book_id) AS running,
+--            (SELECT r FROM roll) AS r FROM pool
+--   ) s WHERE running >= r ORDER BY running LIMIT 1;
+--
+-- Mark the winner:
+--   UPDATE pool_entries SET entry_type = 'free_winner'
+--   WHERE book_id = '<WINNER_BOOK_ID>' AND genre = '<GENRE>'
+--     AND draw_date = CURRENT_DATE;
+--
+-- Mark the 10 finalists with a 24h offer window:
+--   UPDATE pool_entries SET entry_type = 'shortlisted_finalist',
+--     discount_offer_expires_at = now() + interval '24 hours'
+--   WHERE id IN (
+--     SELECT id FROM pool_entries
+--     WHERE genre = '<GENRE>' AND draw_date = CURRENT_DATE
+--       AND entry_type = 'free_draw'
+--     ORDER BY (SELECT upvote_count FROM books WHERE books.id = pool_entries.book_id) DESC
+--     LIMIT 10
+--   );
+--
+-- Dynamic price (tomorrow, per genre) — run as a query, store in app state
+-- or a prices table you add later:
+--   SELECT LEAST(100, 10
+--     + (SELECT count(*) FROM pool_entries WHERE genre = '<GENRE>' AND draw_date = CURRENT_DATE) * 0.25
+--     + (SELECT count(*) FROM sponsored_slots WHERE genre = '<GENRE>' AND feature_date = CURRENT_DATE + 1) * 8
+--   ) AS slot_price;
+--
+-- NOTE: pg_cron must be enabled in your Supabase project (Database > Extensions).
+-- Until then, lib/draw.ts runGenreDraw() reproduces this logic in TypeScript
+-- for demo/testing without any cron running.
